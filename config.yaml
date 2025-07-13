@@ -1,0 +1,33 @@
+training:
+  policy: "adam"
+  betas: [0.9, 0.999]
+  encoder_learning_rate: 0.001
+  decoder_learning_rate: 0.001
+  merger_learning_rate: 0.0001
+  refiner_learning_rate: 0.001
+  encoder_lr_milestones: [150]
+  decoder_lr_milestones: [150]
+  merger_lr_milestones: [150]
+  refiner_lr_milestones: [150]
+  momentum: 0.9
+  gamma: 0.5
+  num_epochs: 2
+
+testing:
+  voxel_thresh: [.2, .3, .4, .5]
+
+dataset:
+  root_dir: "dataset"
+  ground_truth_size: [32, 32, 32]
+  batch_size: 1
+  shuffle: true
+  val_split: 0.2
+
+misc:
+  random_seed: 42
+  device: "cpu"
+
+results:
+  out_path: "./results"
+  logs: "./results/logs"
+  checkpoints: "./results/checkpoints"

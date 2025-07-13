@@ -143,6 +143,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+heart_env/
+
 
 # Spyder project settings
 .spyderproject
@@ -205,3 +207,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# For now added dataset folder to ignore
+dataset/
