@@ -75,12 +75,15 @@ def create_dataloaders(config) -> tuple[DataLoader, DataLoader]:
     # Use num_workers=0 when using CUDA to avoid multiprocessing issues
     num_workers = 0 if config.misc.device == "cuda" else 4
 
+    # Disable pin_memory when using CUDA since tensors are already on GPU
+    pin_memory = False if config.misc.device == "cuda" else True
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=config.dataset.batch_size,
         shuffle=config.dataset.shuffle,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
 
     val_dataloader = DataLoader(
@@ -88,7 +91,7 @@ def create_dataloaders(config) -> tuple[DataLoader, DataLoader]:
         batch_size=1,
         shuffle=False,  # No shuffling for validation
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
 
     return train_dataloader, val_dataloader
