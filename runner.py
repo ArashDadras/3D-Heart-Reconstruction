@@ -1,8 +1,8 @@
 import logging
+
 import torch
 from config import Config
 from scripts.train import train_network
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -12,5 +12,6 @@ if __name__ == "__main__":
     config.misc.device = (
         "cuda" if torch.cuda.is_available() else "cpu"
     )
+    print(config.misc.device)
 
     train_network(config)

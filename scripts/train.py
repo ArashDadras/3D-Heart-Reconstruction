@@ -36,7 +36,9 @@ def init_weights(m):
         torch.nn.init.constant_(m.bias, 0)
 
 
-def save_checkpoint(config, encoder, decoder, merger, refiner, epoch, loss, iou=None):
+def save_checkpoint(
+    config, encoder, decoder, merger, refiner, epoch, loss, iou=None
+):
     """Save model checkpoint."""
     # Create checkpoint directory if it doesn't exist
     os.makedirs(config.results.checkpoints, exist_ok=True)
@@ -56,12 +58,16 @@ def save_checkpoint(config, encoder, decoder, merger, refiner, epoch, loss, iou=
     )
 
     torch.save(checkpoint, checkpoint_path)
-    
+
     # Fix the logging line - use proper conditional formatting
     if iou is not None:
-        logging.info(f"Checkpoint saved to {checkpoint_path} (Loss: {loss:.4f}, IoU: {iou:.4f})")
+        logging.info(
+            f"Checkpoint saved to {checkpoint_path} (Loss: {loss:.4f}, IoU: {iou:.4f})"
+        )
     else:
-        logging.info(f"Checkpoint saved to {checkpoint_path} (Loss: {loss:.4f}, IoU: N/A)")
+        logging.info(
+            f"Checkpoint saved to {checkpoint_path} (Loss: {loss:.4f}, IoU: N/A)"
+        )
 
 
 def train_network(config: Config):

@@ -4,7 +4,6 @@ from typing import Callable, Optional, Tuple
 from torch.utils.data import Dataset
 import torch
 import numpy as np
-from transforms.data_transforms import AddChannel, PadVolume
 
 
 class HeartDataset(Dataset):
@@ -34,7 +33,8 @@ class HeartDataset(Dataset):
         self,
         root_dir: str,
         ground_truth_size: Tuple[int, int, int] = (128, 128, 128),
-        transform: Optional[Callable] = None,
+        input_transform: Optional[Callable] = None,
+        gt_transform: Optional[Callable] = None,
         device: str = "cpu",
     ):
         """
@@ -80,7 +80,8 @@ class HeartDataset(Dataset):
 
         self.image_paths_keys = list(self.image_paths.keys())
         self.device = device
-        self.transform = transform
+        self.input_transform = input_transform
+        self.gt_transform = gt_transform
 
     def check_data_completeness(self) -> dict[str, str]:
         """
@@ -134,6 +135,15 @@ class HeartDataset(Dataset):
 
         return status
 
+    def _extract_spacing_from_header(self, header):
+        """Extract voxel spacing from NRRD header."""
+        if "space directions" in header:
+            space_dirs = header["space directions"]
+            # Extract diagonal values (voxel spacing)
+            spacing = [abs(space_dirs[i][i]) for i in range(len(space_dirs))]
+            return tuple(spacing)
+        return None
+
     def __len__(self) -> int:
         """
         Return the number of complete image entries in the dataset.
@@ -163,22 +173,20 @@ class HeartDataset(Dataset):
         ch2, _ = nrrd.read(self.image_paths[image_id][self.CH2_PATH])
         ch3, _ = nrrd.read(self.image_paths[image_id][self.CH3_PATH])
         ch4, _ = nrrd.read(self.image_paths[image_id][self.CH4_PATH])
-        gt, _ = nrrd.read(self.image_paths[image_id][self.GT_PATH])
+        gt, gt_header = nrrd.read(self.image_paths[image_id][self.GT_PATH])
 
         # For time series images (ch2, ch3, ch4), take the middle frame
         ch2 = ch2[ch2.shape[0] // 2]
         ch3 = ch3[ch3.shape[0] // 2]
         ch4 = ch4[ch4.shape[0] // 2]
-        ch2 = AddChannel(3)(ch2)
-        ch3 = AddChannel(3)(ch3)
-        ch4 = AddChannel(3)(ch4)
 
-        ground_truth = PadVolume(self.ground_truth_size)(gt)
+        if self.gt_transform:
+            ground_truth = self.gt_transform(gt, gt_header)
 
-        if self.transform:
-            ch2 = self.transform(ch2)
-            ch3 = self.transform(ch3)
-            ch4 = self.transform(ch4)
+        if self.input_transform:
+            ch2 = self.input_transform(ch2)
+            ch3 = self.input_transform(ch3)
+            ch4 = self.input_transform(ch4)
 
         # Stack the channels (3 views)
         stacked_images = np.stack([ch2, ch3, ch4], axis=0)
