@@ -72,11 +72,14 @@ def create_dataloaders(config) -> tuple[DataLoader, DataLoader]:
     """
     train_dataset, val_dataset = create_train_val_datasets(config)
 
+    # Use num_workers=0 when using CUDA to avoid multiprocessing issues
+    num_workers = 0 if config.misc.device == "cuda" else 4
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=config.dataset.batch_size,
         shuffle=config.dataset.shuffle,
-        num_workers=4,
+        num_workers=num_workers,
         pin_memory=True,
     )
 
@@ -84,7 +87,7 @@ def create_dataloaders(config) -> tuple[DataLoader, DataLoader]:
         val_dataset,
         batch_size=1,
         shuffle=False,  # No shuffling for validation
-        num_workers=4,
+        num_workers=num_workers,
         pin_memory=True,
     )
 
