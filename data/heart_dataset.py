@@ -73,13 +73,10 @@ class HeartDataset(Dataset):
         self.check_data_completeness()
 
         # Keep only the first 5 items for testing
-        if len(self.image_paths) > 5:
-            keys_to_remove = list(self.image_paths.keys())[5:]
-            for key in keys_to_remove:
-                del self.image_paths[key]
-            print(
-                f"Keeping only first 5 samples for testing. Removed {len(keys_to_remove)} additional samples."
-            )
+        # if len(self.image_paths) > 5:
+        #     keys_to_remove = list(self.image_paths.keys())[5:]
+        #     for key in keys_to_remove:
+        #         del self.image_paths[key]
 
         self.image_paths_keys = list(self.image_paths.keys())
         self.device = device
