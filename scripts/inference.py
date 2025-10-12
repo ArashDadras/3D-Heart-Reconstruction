@@ -269,7 +269,7 @@ def main():
     config.misc.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Use the latest checkpoint
-    checkpoint_path = "results/checkpoints/checkpoint_epoch_100.pth"
+    checkpoint_path = "results/checkpoints/checkpoint_epoch_46.pth"
     test_data_path = "dataset/test"
     output_dir = "results/inference_output"
 

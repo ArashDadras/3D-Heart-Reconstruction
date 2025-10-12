@@ -301,7 +301,7 @@ if __name__ == "__main__":
 
     elif choice == "2":
         # Run inference on test data using the existing checkpoints
-        checkpoint_path = "results/checkpoints/checkpoint_epoch_100.pth"
+        checkpoint_path = "results/checkpoints/checkpoint_epoch_46.pth"
         test_data_path = "dataset/test"
         output_dir = "results/inference_output"
 
