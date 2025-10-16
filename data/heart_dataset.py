@@ -1,9 +1,12 @@
 import nrrd
+import logging
+import torch
+import numpy as np
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 from torch.utils.data import Dataset
-import torch
-import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class HeartDataset(Dataset):
@@ -108,7 +111,7 @@ class HeartDataset(Dataset):
 
             if missing_keys:
                 status[image_id] = "incomplete"
-                print(
+                logger.warning(
                     f"WARNING: Image {image_id} missing keys: {missing_keys}"
                 )
                 incomplete_ids.append(image_id)
@@ -121,7 +124,7 @@ class HeartDataset(Dataset):
 
                 if empty_values:
                     status[image_id] = "empty_values"
-                    print(
+                    logger.warning(
                         f"WARNING: Image {image_id} has empty values for "
                         f"keys: {empty_values}"
                     )
@@ -131,9 +134,67 @@ class HeartDataset(Dataset):
 
         for image_id in incomplete_ids:
             del self.image_paths[image_id]
-            print(f"Removing image {image_id} from dataset")
+            logger.warning(f"Removing image {image_id} from dataset")
 
         return status
+
+    def do_health_checks(self):
+        """
+        Check the health of the dataset.
+
+        Returns:
+            dict: Dictionary with the following keys:
+                - valid: Number of valid items
+                - corrupted: Number of corrupted items
+                - total: Total number of items
+                - corrupted_ids: List of corrupted image IDs
+        """
+        corrupted_items, valid_items = [], []
+
+        for i in range(len(self)):
+            try:
+                input_images, ground_truth = self[i]
+                image_id = self.image_paths_keys[i]
+
+                input_shape = input_images.shape
+                gt_shape = ground_truth.shape
+
+                if any(dim == 0 for dim in input_shape + gt_shape):
+                    corrupted_items.append(
+                        {
+                            "index": i,
+                            "image_id": image_id,
+                            "issue": "zero_dimension",
+                        }
+                    )
+                else:
+                    valid_items.append(
+                        {
+                            "index": i,
+                            "image_id": image_id,
+                            "input_shape": input_shape,
+                            "gt_shape": gt_shape,
+                        }
+                    )
+
+            except Exception as e:
+                corrupted_items.append(
+                    {
+                        "index": i,
+                        "image_id": getattr(
+                            self, "image_paths_keys", ["unknown"]
+                        )[i],
+                        "issue": str(e),
+                    }
+                )
+                continue
+
+        return {
+            "valid": len(valid_items),
+            "corrupted": len(corrupted_items),
+            "total": len(self),
+            "corrupted_ids": [item["image_id"] for item in corrupted_items],
+        }
 
     def _extract_spacing_from_header(self, header):
         """Extract voxel spacing from NRRD header."""

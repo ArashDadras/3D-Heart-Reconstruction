@@ -7,17 +7,20 @@ from transforms.data_transforms import (
     AddChannel,
     Normalize,
 )
+from config import Config
 
 
-def create_train_val_datasets(config):
+def create_dataset(config: Config):
     """
-    Create train and validation datasets with proper splitting.
+    Create HeartDataset from dataset folder.
+    Be careful when getting items since it also
+    sets transforms for input and ground truth.
 
     Args:
         config: Configuration object with dataset parameters
 
     Returns:
-        tuple: (train_dataset, val_dataset)
+        HeartDataset: HeartDataset object
     """
 
     input_transform = Compose(
@@ -36,7 +39,6 @@ def create_train_val_datasets(config):
         ]
     )
 
-    # Create full dataset
     full_dataset = HeartDataset(
         root_dir=config.dataset.root_dir,
         ground_truth_size=config.dataset.ground_truth_size,
@@ -45,12 +47,28 @@ def create_train_val_datasets(config):
         gt_transform=gt_transform,
     )
 
-    # Calculate split sizes
+    return full_dataset
+
+
+def create_train_val_datasets(config: Config):
+    """
+    Create train and validation datasets with proper splitting.
+    Be careful when getting items since it also
+    sets transforms for input and ground truth.
+
+    Args:
+        config: Configuration object with dataset parameters
+
+    Returns:
+        tuple: (train_dataset, val_dataset)
+    """
+
+    full_dataset = create_dataset(config)
+
     total_size = len(full_dataset)
     val_size = int(total_size * config.dataset.val_split)
     train_size = total_size - val_size
 
-    # Split the dataset
     train_dataset, val_dataset = random_split(
         full_dataset,
         [train_size, val_size],

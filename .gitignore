@@ -211,6 +211,6 @@ __marimo__/
 
 # For now added dataset folder to ignore
 dataset/
-
+corrupted data/
 # results
 results/
