@@ -4,21 +4,23 @@ import logging
 from utils.logger import setup_logging
 from config import Config
 from data.dataloader import create_dataset
-from scripts.inference import run_inference_on_test_data
+from scripts.inference import create_and_run_inference_on_test_data
 from scripts.train import train_network
 
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     config = Config.from_yaml("config.yaml")
-    config.misc.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if config.misc.device == "cuda":
+        config.misc.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     logger = setup_logging(config.results.logs)
 
     print("\nChoose an option:")
     print("1. Check dataset integrity")
-    print("2. Run inference on test data")
-    print("3. Train model")
+    print("2. Train model")
+    print("3. Run inference on test data")
 
     choice = input("Enter your choice (1/2/3): ").strip()
 
@@ -43,6 +45,16 @@ if __name__ == "__main__":
             logger.info("Dataset integrity check passed")
 
     elif choice == "2":
+        logger.info("Starting inference on test data")
+        logger.info(f"Device: {config.misc.device}")
+        try:
+            train_network(config)
+            logger.info("Training completed successfully")
+        except Exception as e:
+            logger.error(f"Training failed with error: {str(e)}")
+            raise
+
+    elif choice == "3":
         checkpoint_path = "results/checkpoints/checkpoint_epoch_46.pth"
         test_data_path = "dataset/test"
         output_dir = "results/inference_output"
@@ -57,7 +69,7 @@ if __name__ == "__main__":
         print(f"Output directory: {output_dir}")
 
         try:
-            run_inference_on_test_data(
+            create_and_run_inference_on_test_data(
                 checkpoint_path=checkpoint_path,
                 test_data_path=test_data_path,
                 output_dir=output_dir,
@@ -66,21 +78,6 @@ if __name__ == "__main__":
             logger.info("Inference completed successfully")
         except Exception as e:
             logger.error(f"Inference failed with error: {str(e)}")
-            raise
-
-    elif choice == "3":
-        # Train model
-        logger.info("Starting model training")
-        logger.info(f"Device: {config.misc.device}")
-        print(
-            "Training is currently disabled. Uncomment train_network(config)"
-            " to enable."
-        )
-        try:
-            train_network(config)
-            logger.info("Training completed successfully")
-        except Exception as e:
-            logger.error(f"Training failed with error: {str(e)}")
             raise
 
     else:

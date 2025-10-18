@@ -1,6 +1,7 @@
 import torch
 import logging
 import os
+import numpy as np
 from config import Config
 from models.encoder import Encoder
 from models.decoder import Decoder
@@ -8,12 +9,10 @@ from models.merger import Merger
 from models.refiner import Refiner
 from data.dataloader import create_dataloaders
 from utils.average_meter import AverageMeter
-from time import time
-import numpy as np
+from scripts.inference import run_inference_on_data_loader
+from pathlib import Path
 
-
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters())
+logger = logging.getLogger(__name__)
 
 
 def init_weights(m):
@@ -37,10 +36,32 @@ def init_weights(m):
 
 
 def save_checkpoint(
-    config, encoder, decoder, merger, refiner, epoch, loss, iou=None
-):
-    """Save model checkpoint."""
-    # Create checkpoint directory if it doesn't exist
+    config: Config,
+    encoder: Encoder,
+    decoder: Decoder,
+    merger: Merger,
+    refiner: Refiner,
+    epoch: int,
+    loss: float,
+    iou: float = None,
+    checkpoint_type: str = "regular",
+) -> str:
+    """
+    Save model checkpoint.
+    Args:
+        config: Config object
+        encoder: Encoder model
+        decoder: Decoder model
+        merger: Merger model
+        refiner: Refiner model
+        epoch: Current epoch
+        loss: Current loss
+        iou: Current IoU
+        checkpoint_type: Type of checkpoint ("regular", "best_loss",
+                                           "best_iou", "best_iou_loss")
+    Returns:
+        checkpoint_path: Path to saved checkpoint
+    """
     os.makedirs(config.results.checkpoints, exist_ok=True)
 
     checkpoint = {
@@ -53,24 +74,41 @@ def save_checkpoint(
         "iou": iou,
     }
 
-    checkpoint_path = os.path.join(
-        config.results.checkpoints, f"checkpoint_epoch_{epoch}.pth"
-    )
+    if checkpoint_type == "best_loss":
+        checkpoint_path = os.path.join(
+            config.results.checkpoints, f"best_loss_epoch_{epoch}.pth"
+        )
+    elif checkpoint_type == "best_iou":
+        checkpoint_path = os.path.join(
+            config.results.checkpoints, f"best_iou_epoch_{epoch}.pth"
+        )
+    elif checkpoint_type == "best_iou_loss":
+        checkpoint_path = os.path.join(
+            config.results.checkpoints, f"best_iou_loss_epoch_{epoch}.pth"
+        )
+    else:
+        checkpoint_path = os.path.join(
+            config.results.checkpoints, f"checkpoint_epoch_{epoch}.pth"
+        )
 
     torch.save(checkpoint, checkpoint_path)
 
-    # Fix the logging line - use proper conditional formatting
     if iou is not None:
         logging.info(
-            f"Checkpoint saved to {checkpoint_path} (Loss: {loss:.4f}, IoU: {iou:.4f})"
+            f"Checkpoint saved to {checkpoint_path}\
+                 (Loss: {loss:.4f}, IoU: {iou:.4f})"
         )
     else:
         logging.info(
-            f"Checkpoint saved to {checkpoint_path} (Loss: {loss:.4f}, IoU: N/A)"
+            f"Checkpoint saved to {checkpoint_path}\
+                 (Loss: {loss:.4f}, IoU: N/A)"
         )
+
+    return checkpoint_path
 
 
 def train_network(config: Config):
+    checkpoints_paths = []
     train_set_dataloader, val_set_dataloader = create_dataloaders(config)
 
     logging.info("train dataset size: %s", len(train_set_dataloader.dataset))
@@ -81,12 +119,6 @@ def train_network(config: Config):
     merger = Merger().to(config.misc.device)
     refiner = Refiner().to(config.misc.device)
 
-    logging.info("encoder parameters: %s", count_parameters(encoder))
-    logging.info("decoder parameters: %s", count_parameters(decoder))
-    logging.info("merger parameters: %s", count_parameters(merger))
-    logging.info("refiner parameters: %s", count_parameters(refiner))
-
-    # Set up solver
     if config.training.policy == "adam":
         encoder_solver = torch.optim.Adam(
             filter(lambda p: p.requires_grad, encoder.parameters()),
@@ -134,7 +166,6 @@ def train_network(config: Config):
             "[FATAL] Unknown optimizer %s." % (config.training.policy)
         )
 
-    # Set up learning rate scheduler to decay learning rates dynamically
     encoder_lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         encoder_solver,
         milestones=config.training.encoder_lr_milestones,
@@ -156,38 +187,23 @@ def train_network(config: Config):
         gamma=config.training.gamma,
     )
 
-    # Set up loss functions
     bce_loss = torch.nn.BCELoss()
 
-    init_epoch = 0
     best_loss = float("inf")
+    best_iou = 0.0
+    best_loss_epoch = 0
+    best_iou_epoch = 0
 
-    for epoch_idx in range(init_epoch, config.training.num_epochs):
-        # Tick / tock
-        epoch_start_time = time()
-
-        # Batch average metrics
-        batch_time = AverageMeter()
-        data_time = AverageMeter()
+    for epoch_idx in range(config.training.num_epochs):
         encoder_losses = AverageMeter()
         refiner_losses = AverageMeter()
 
-        # switch models to training mode
         encoder.train()
         decoder.train()
         merger.train()
         refiner.train()
 
-        batch_end_time = time()
-        n_batches = len(train_set_dataloader)
-
-        for batch_idx, (
-            input_images,
-            ground_truth_volumes,
-        ) in enumerate(train_set_dataloader):
-            data_time.update(time() - batch_end_time)
-
-            # Train the encoder, decoder, refiner, and merger
+        for input_images, ground_truth_volumes in train_set_dataloader:
             image_features = encoder(input_images)
             raw_features, generated_volumes = decoder(image_features)
             generated_volumes = merger(raw_features, generated_volumes)
@@ -214,100 +230,126 @@ def train_network(config: Config):
             refiner_solver.step()
             merger_solver.step()
 
-            # Append loss to average metrics
             encoder_losses.update(encoder_loss.item())
             refiner_losses.update(refiner_loss.item())
 
-            # Tick / tock
-            batch_time.update(time() - batch_end_time)
-            batch_end_time = time()
-
-            # Log every 10 batches
-            if batch_idx % 2 == 0:
-                logging.info(
-                    "[Epoch %d/%d][Batch %d/%d] EDLoss = %.4f RLoss = %.4f"
-                    % (
-                        epoch_idx + 1,
-                        config.training.num_epochs,
-                        batch_idx + 1,
-                        n_batches,
-                        encoder_loss.item(),
-                        refiner_loss.item(),
-                    )
-                )
-
-        # Adjust learning rate
         encoder_lr_scheduler.step()
         decoder_lr_scheduler.step()
         refiner_lr_scheduler.step()
         merger_lr_scheduler.step()
 
-        # Calculate average loss for the epoch
         avg_encoder_loss = encoder_losses.avg
         avg_refiner_loss = refiner_losses.avg
         total_loss = avg_encoder_loss + avg_refiner_loss
 
-        # Tick / tock
-        epoch_end_time = time()
-        logging.info(
-            """[Epoch %d/%d] EpochTime = %.3f (s) EDLoss = %.4f
-            RLoss = %.4f TotalLoss = %.4f"""
-            % (
-                epoch_idx + 1,
-                config.training.num_epochs,
-                epoch_end_time - epoch_start_time,
-                avg_encoder_loss,
-                avg_refiner_loss,
-                total_loss,
-            )
-        )
-
-        # Validate the network
-        max_iou = validate_network(
+        val_loss, max_iou = validate_network(
             config, val_set_dataloader, encoder, decoder, merger, refiner
         )
 
-        # Log epoch summary with IoU
         logging.info(
-            """[Epoch %d/%d] EpochTime = %.3f (s) EDLoss = %.4f RLoss = %.4f
-              TotalLoss = %.4f IoU = %.4f"""
-            % (
-                epoch_idx + 1,
-                config.training.num_epochs,
-                epoch_end_time - epoch_start_time,
-                avg_encoder_loss,
-                avg_refiner_loss,
-                total_loss,
-                max_iou,
-            )
+            f"[Epoch {epoch_idx + 1}/{config.training.num_epochs}] "
+            f"Train -> EncoderLoss: {avg_encoder_loss:.4f},\
+                 RefinerLoss: {avg_refiner_loss:.4f},\
+                 Total: {total_loss:.4f}"
+        )
+        logging.info(
+            f"[Epoch {epoch_idx + 1}/{config.training.num_epochs}] "
+            f"Validation -> Loss: {val_loss:.4f},\
+                 IoU: {max_iou:.4f}"
         )
 
-        # Save checkpoint if this is the best loss so far
-        if total_loss < best_loss:
-            best_loss = total_loss
-            save_checkpoint(
-                config,
-                encoder,
-                decoder,
-                merger,
-                refiner,
-                epoch_idx + 1,
-                total_loss,
-                max_iou,
-            )
+        is_best_loss = total_loss < best_loss
+        is_best_iou = max_iou > best_iou
 
-    # Save final checkpoint
-    save_checkpoint(
-        config,
-        encoder,
-        decoder,
-        merger,
-        refiner,
-        config.training.num_epochs,
-        total_loss,
-        max_iou,
+        if is_best_loss:
+            best_loss = total_loss
+            best_loss_epoch = epoch_idx + 1
+
+        if is_best_iou:
+            best_iou = max_iou
+            best_iou_epoch = epoch_idx + 1
+
+        checkpoint_type = ""
+        if is_best_loss and is_best_iou:
+            checkpoint_type = "best_iou_loss"
+        elif is_best_loss:
+            checkpoint_type = "best_loss"
+        elif is_best_iou:
+            checkpoint_type = "best_iou"
+
+        checkpoint_path = save_checkpoint(
+            config,
+            encoder,
+            decoder,
+            merger,
+            refiner,
+            epoch_idx + 1,
+            total_loss,
+            max_iou,
+            checkpoint_type=checkpoint_type,
+        )
+        checkpoints_paths.append(checkpoint_path)
+
+    # ---- final summary ----
+    logging.info("===== Training Summary =====")
+    logging.info(f"Best Loss: {best_loss:.4f} (Epoch {best_loss_epoch})")
+    logging.info(f"Best IoU : {best_iou:.4f} (Epoch {best_iou_epoch})")
+
+    # Save the inference on validation set and train set
+    # with the best checkpoint
+    print(checkpoints_paths)
+
+    best_iou_loss_checkpoint_path = find_best_checkpoint(
+        "best_iou_loss", checkpoints_paths
     )
-    logging.info("Training completed! Final checkpoint saved.")
+    best_loss_checkpoint_path = find_best_checkpoint(
+        "best_loss", checkpoints_paths
+    )
+    best_iou_checkpoint_path = find_best_checkpoint(
+        "best_iou", checkpoints_paths
+    )
+
+    if best_iou_loss_checkpoint_path is not None:
+        logging.info(
+            f"Running inference on validation set with \
+                best iou loss checkpoint: {best_iou_loss_checkpoint_path}"
+        )
+        run_inference_on_data_loader(
+            best_iou_loss_checkpoint_path,
+            val_set_dataloader,
+            "results/inference_output",
+            config,
+        )
+
+    if (
+        best_loss_checkpoint_path is not None
+        and best_iou_loss_checkpoint_path != best_loss_checkpoint_path
+    ):
+        logging.info(
+            f"Running inference on validation set with \
+                best loss checkpoint: {best_loss_checkpoint_path}"
+        )
+        run_inference_on_data_loader(
+            best_loss_checkpoint_path,
+            val_set_dataloader,
+            "results/inference_output",
+            config,
+        )
+
+    if (
+        best_iou_checkpoint_path is not None
+        and best_iou_loss_checkpoint_path != best_iou_checkpoint_path
+    ):
+        logging.info(
+            f"Running inference on validation set with \
+                best iou checkpoint: {best_iou_checkpoint_path}"
+        )
+        run_inference_on_data_loader(
+            best_iou_checkpoint_path,
+            val_set_dataloader,
+            "results/inference_output",
+            config,
+        )
 
 
 def validate_network(
@@ -318,41 +360,44 @@ def validate_network(
     merger: torch.nn.Module,
     refiner: torch.nn.Module,
 ):
-    """Validate the network and return mean IoU."""
-    # Set up loss functions
+    """
+    Validate the network and return mean IoU and mean loss.
+    Args:
+        config: Config object
+        val_set_dataloader: Validation set dataloader
+        encoder: Encoder model
+        decoder: Decoder model
+        merger: Merger model
+        refiner: Refiner model
+
+    Returns:
+        mean_loss: Mean loss
+        max_iou: Maximum IoU
+    """
     bce_loss = torch.nn.BCELoss()
 
-    # Testing loop
-    n_samples = len(val_set_dataloader)
     encoder_losses = AverageMeter()
     refiner_losses = AverageMeter()
-    all_ious = []  # Store IoU for each sample
+    all_ious = []
 
-    # Switch models to evaluation mode
     encoder.eval()
     decoder.eval()
     refiner.eval()
     merger.eval()
 
-    for batch_idx, (input_images, ground_truth_volume) in enumerate(
-        val_set_dataloader
-    ):
+    for input_images, ground_truth_volume in val_set_dataloader:
         with torch.no_grad():
             image_features = encoder(input_images)
             raw_features, generated_volume = decoder(image_features)
             generated_volume = merger(raw_features, generated_volume)
 
             encoder_loss = bce_loss(generated_volume, ground_truth_volume) * 10
-
             generated_volume = refiner(generated_volume)
-
             refiner_loss = bce_loss(generated_volume, ground_truth_volume) * 10
 
-            # Append loss to average metrics
             encoder_losses.update(encoder_loss.item())
             refiner_losses.update(refiner_loss.item())
 
-            # IoU per sample
             sample_iou = []
             for th in config.testing.voxel_thresh:
                 _volume = torch.ge(generated_volume, th).float()
@@ -366,33 +411,38 @@ def validate_network(
 
             all_ious.append(sample_iou)
 
-            # Log sample results
-            logging.info(
-                "Val[%d/%d] EDLoss = %.4f RLoss = %.4f IoU = %s"
-                % (
-                    batch_idx + 1,
-                    n_samples,
-                    encoder_loss.item(),
-                    refiner_loss.item(),
-                    ["%.4f" % si for si in sample_iou],
-                )
-            )
-
-    # Calculate mean IoU across all samples
     mean_iou = np.mean(all_ious, axis=0)
-
-    # Log validation summary
-    logging.info(
-        "Validation Summary - Avg EDLoss: %.4f, Avg RLoss: %.4f, Mean IoU: %s"
-        % (
-            encoder_losses.avg,
-            refiner_losses.avg,
-            ["%.4f" % mi for mi in mean_iou],
-        )
-    )
-
-    # Return the maximum IoU (best performance across thresholds)
     max_iou = np.max(mean_iou)
-    logging.info("Best IoU: %.4f" % max_iou)
+    avg_loss = encoder_losses.avg + refiner_losses.avg
 
-    return max_iou
+    return avg_loss, max_iou
+
+
+def find_best_checkpoint(
+    type: str, checkpoints_paths: list[str]
+) -> str | None:
+    """
+    Find the best checkpoint based on the type.
+    Args:
+        type: Type of checkpoint ("best_loss", "best_iou", "best_iou_loss")
+        checkpoints_paths: List of checkpoint paths
+    Returns:
+        best_checkpoint_path: Path to best checkpoint
+    """
+
+    if type not in ["best_loss", "best_iou", "best_iou_loss"]:
+        raise ValueError(f"Invalid checkpoint type: {type}")
+
+    selected_checkpoints = []
+    for checkpoint in checkpoints_paths:
+        filename = Path(checkpoint).name
+        if filename.startswith(type):
+            selected_checkpoints.append(str(Path(checkpoint)))
+
+    if not selected_checkpoints:
+        return None
+
+    sorted_checkpoints = sorted(
+        selected_checkpoints, key=lambda p: Path(p).name
+    )
+    return sorted_checkpoints[-1]

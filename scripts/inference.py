@@ -25,27 +25,29 @@ from transforms.data_transforms import (
 )
 from torch.utils.data import DataLoader
 
+logger = logging.getLogger(__name__)
 
-def load_model_from_checkpoint(checkpoint_path: str, config: Config):
+
+def load_model_from_checkpoint(
+    checkpoint_path: str, config: Config
+) -> tuple[Encoder, Decoder, Merger, Refiner]:
     """
     Load trained models from checkpoint.
 
     Args:
-        checkpoint_path: Path to the checkpoint file
-        config: Configuration object
+        checkpoint_path (str): Path to the checkpoint file
+        config (Config): Configuration object
 
     Returns:
-        tuple: (encoder, decoder, merger, refiner) loaded models
+        tuple[Encoder, Decoder, Merger, Refiner]: Loaded models
     """
     logging.info(f"Loading models from checkpoint: {checkpoint_path}")
 
-    # Initialize models
     encoder = Encoder()
     decoder = Decoder()
     merger = Merger()
     refiner = Refiner()
 
-    # Load checkpoint
     if os.path.exists(checkpoint_path):
         logging.info(f"Loading checkpoint from {checkpoint_path}")
         checkpoint = torch.load(
@@ -54,7 +56,6 @@ def load_model_from_checkpoint(checkpoint_path: str, config: Config):
             weights_only=False,  # Fix for PyTorch 2.6+ compatibility
         )
 
-        # Load model states
         encoder.load_state_dict(checkpoint["encoder_state_dict"])
         decoder.load_state_dict(checkpoint["decoder_state_dict"])
         merger.load_state_dict(checkpoint["merger_state_dict"])
@@ -65,13 +66,11 @@ def load_model_from_checkpoint(checkpoint_path: str, config: Config):
         logging.warning(f"Checkpoint not found at {checkpoint_path}")
         logging.warning("Using randomly initialized models")
 
-    # Move models to device
     encoder = encoder.to(config.misc.device)
     decoder = decoder.to(config.misc.device)
     merger = merger.to(config.misc.device)
     refiner = refiner.to(config.misc.device)
 
-    # Set to evaluation mode
     encoder.eval()
     decoder.eval()
     merger.eval()
@@ -81,20 +80,19 @@ def load_model_from_checkpoint(checkpoint_path: str, config: Config):
     return encoder, decoder, merger, refiner
 
 
-def create_test_dataset(test_data_path: str, config: Config):
+def create_test_dataset(test_data_path: str, config: Config) -> DataLoader:
     """
-    Create a test dataset for inference.
+    Create test dataset for inference.
 
     Args:
-        test_data_path: Path to test data directory
-        config: Configuration object
+        test_data_path (str): Path to test data directory
+        config (Config): Configuration object
 
     Returns:
-        DataLoader: Test data loader
+        DataLoader: Data loader for test dataset
     """
     logging.info(f"Creating test dataset from: {test_data_path}")
 
-    # Input transforms for 3-channel data
     input_transform = Compose(
         [
             AddChannel(3),
@@ -102,7 +100,6 @@ def create_test_dataset(test_data_path: str, config: Config):
         ]
     )
 
-    # Ground truth transforms (same as training)
     gt_transform = Compose(
         [
             ResizeAndPad(
@@ -112,7 +109,6 @@ def create_test_dataset(test_data_path: str, config: Config):
         ]
     )
 
-    # Create test dataset
     test_dataset = HeartDataset(
         root_dir=test_data_path,
         ground_truth_size=config.dataset.ground_truth_size,
@@ -121,12 +117,11 @@ def create_test_dataset(test_data_path: str, config: Config):
         gt_transform=gt_transform,
     )
 
-    # Create dataloader
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=1,  # Process one sample at a time
+        batch_size=1,
         shuffle=False,
-        num_workers=0,  # No multiprocessing for inference
+        num_workers=0,
         pin_memory=False,
     )
 
@@ -134,11 +129,14 @@ def create_test_dataset(test_data_path: str, config: Config):
     return test_dataloader
 
 
-def run_inference_on_test_data(
-    checkpoint_path: str, test_data_path: str, output_dir: str, config: Config
+def create_and_run_inference_on_test_data(
+    checkpoint_path: str,
+    test_data_path: str,
+    output_dir: str,
+    config: Config,
 ):
     """
-    Run inference on test data and save results.
+    Create test dataset and run inference on it.
 
     Args:
         checkpoint_path: Path to model checkpoint
@@ -146,56 +144,68 @@ def run_inference_on_test_data(
         output_dir: Directory to save inference results
         config: Configuration object
     """
-    print("=" * 60)
-    print("RUNNING INFERENCE ON TEST DATA")
-    print("=" * 60)
 
-    # Create output directory
+    test_dataloader = create_test_dataset(test_data_path, config)
+
+    run_inference_on_data_loader(
+        checkpoint_path=checkpoint_path,
+        data_loader=test_dataloader,
+        output_dir=output_dir,
+        config=config,
+    )
+
+
+def run_inference_on_data_loader(
+    checkpoint_path: str,
+    data_loader: DataLoader,
+    output_dir: str,
+    config: Config,
+):
+    """
+    Run inference on a given data loader.
+
+    Args:
+        checkpoint_path: Path to model checkpoint
+        data_loader: Data loader
+        output_dir: Directory to save inference results
+        config: Configuration object
+    """
     os.makedirs(output_dir, exist_ok=True)
     volumes_dir = os.path.join(output_dir, "generated_volumes")
     os.makedirs(volumes_dir, exist_ok=True)
 
-    # Load models
     encoder, decoder, merger, refiner = load_model_from_checkpoint(
         checkpoint_path, config
     )
 
-    # Create test dataset
-    test_dataloader = create_test_dataset(test_data_path, config)
-
-    if len(test_dataloader) == 0:
-        print("No test data found!")
+    if len(data_loader) == 0:
+        logger.error("Data loader is empty!")
         return
 
-    print(f"Running inference on {len(test_dataloader)} samples...")
-    print(f"Saving results to: {output_dir}")
-    print()
+    logger.info(f"Running inference on {len(data_loader)} samples...")
+    logger.info(f"Saving results to: {output_dir}")
+    logger.info(f"Using checkpoint: {checkpoint_path}")
 
-    # Run inference
     inference_results = []
 
     with torch.no_grad():
-        for batch_idx, (input_images, ground_truth) in enumerate(
-            test_dataloader
-        ):
-            print(f"Processing sample {batch_idx + 1}/{len(test_dataloader)}")
+        for batch_idx, (input_images, ground_truth) in enumerate(data_loader):
+            logger.info(
+                f"Processing sample {batch_idx + 1}/{len(data_loader)}"
+            )
 
             try:
-                # Forward pass through models
                 image_features = encoder(input_images)
                 raw_features, generated_volume = decoder(image_features)
                 generated_volume = merger(raw_features, generated_volume)
                 refined_volume = refiner(generated_volume)
 
-                # Convert to numpy for saving
                 refined_np = refined_volume.cpu().squeeze().numpy()
                 ground_truth_np = ground_truth.cpu().squeeze().numpy()
 
-                # Save generated volume
                 volume_filename = f"inference_result_{batch_idx:04d}.nrrd"
                 volume_path = os.path.join(volumes_dir, volume_filename)
 
-                # Create NRRD header
                 header = {
                     "dimension": 3,
                     "type": "float32",
@@ -206,13 +216,11 @@ def run_inference_on_test_data(
 
                 nrrd.write(volume_path, refined_np, header)
 
-                # Save ground truth for comparison
                 if ground_truth_np.size > 0:
                     gt_filename = f"ground_truth_{batch_idx:04d}.nrrd"
                     gt_path = os.path.join(volumes_dir, gt_filename)
                     nrrd.write(gt_path, ground_truth_np, header)
 
-                # Store results
                 inference_results.append(
                     {
                         "sample_id": batch_idx,
@@ -225,22 +233,21 @@ def run_inference_on_test_data(
                     }
                 )
 
-                print(f"  ✅ Saved: {volume_filename}")
-                print(f"     Generated shape: {refined_np.shape}")
-                print(f"     Ground truth shape: {ground_truth_np.shape}")
+                logger.info(f"Saved: {volume_filename}")
+                logger.info(f"Generated shape: {refined_np.shape}")
+                logger.info(f"Ground truth shape: {ground_truth_np.shape}")
 
             except Exception as e:
-                print(f"  ❌ Error processing sample {batch_idx}: {str(e)}")
+                logger.error(f"Error processing sample {batch_idx}: {str(e)}")
                 continue
 
-    # Save summary
     summary_path = os.path.join(output_dir, "inference_summary.txt")
     with open(summary_path, "w") as f:
         f.write("Inference Summary\n")
         f.write("=" * 50 + "\n")
         f.write(f"Total samples processed: {len(inference_results)}\n")
         f.write(f"Checkpoint used: {checkpoint_path}\n")
-        f.write(f"Test data path: {test_data_path}\n")
+        f.write(f"Data loader used: {data_loader}\n")
         f.write(f"Output directory: {output_dir}\n\n")
 
         f.write("Generated Files:\n")
@@ -252,39 +259,7 @@ def run_inference_on_test_data(
             f.write(f"  Shape: {result['generated_shape']}\n")
             f.write("\n")
 
-    print()
-    print("=" * 60)
-    print("INFERENCE COMPLETE")
-    print("=" * 60)
-    print(f"✅ Processed {len(inference_results)} samples")
-    print(f"💾 Results saved to: {output_dir}")
-    print(f"📊 Summary saved to: {summary_path}")
-
-
-def main():
-    """Main function for standalone inference execution."""
-    logging.basicConfig(level=logging.INFO)
-
-    config = Config.from_yaml("config.yaml")
-    config.misc.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Use the latest checkpoint
-    checkpoint_path = "results/checkpoints/checkpoint_epoch_46.pth"
-    test_data_path = "dataset/test"
-    output_dir = "results/inference_output"
-
-    print(f"Using device: {config.misc.device}")
-    print(f"Checkpoint: {checkpoint_path}")
-    print(f"Test data: {test_data_path}")
-    print(f"Output directory: {output_dir}")
-
-    run_inference_on_test_data(
-        checkpoint_path=checkpoint_path,
-        test_data_path=test_data_path,
-        output_dir=output_dir,
-        config=config,
-    )
-
-
-if __name__ == "__main__":
-    main()
+    logger.info("Inference completed successfully")
+    logger.info(f"Processed {len(inference_results)} samples")
+    logger.info(f"Results saved to: {output_dir}")
+    logger.info(f"Summary saved to: {summary_path}")
